@@ -19,6 +19,7 @@ from imblearn.over_sampling import SMOTE
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from imcp import mcp_curve, mcp_score, plot_mcp_curve, imcp_curve, imcp_score, plot_imcp_curve, plot_curve
+from sklearn.decomposition import PCA
 
 
 def dataset_parser_def(df):
@@ -63,7 +64,8 @@ def dataset_parser_def(df):
   df[class_col] = df[class_col].map(class_mapping)
   labels = df[class_col].astype(int)
 
-  
+  data = data[:,:3]
+  print('Data subsetted:',data.shape,'\n')
   #print('classes:',labels.shape)
 
   return data,labels,count
@@ -219,7 +221,7 @@ def parser_metrics(dataset,dict):
 
   return  metrics_row
 
-def cross_validation(X,Y,n_splits,model,averages):
+def cross_validation(X,Y,n_splits,model,averages,name):
     
     print(f'CROSS-VALIDATION: {n_splits} folds ; {model} algorithm')
     #Provides the data in X,Y as np.array
@@ -234,11 +236,17 @@ def cross_validation(X,Y,n_splits,model,averages):
     list_mcc_smote, list_mcc_kde, list_mcc_ori = [], [], []
     list_f1_kde, list_f1_smote, list_f1_ori = [], [], []
 
+    smote_full, kde_full = [],[]
+    full_lab_smote, full_lab_kde = [], []
+    full_original, full_lab_ori = [], []
+
     for j,(train_index, test_index) in enumerate(skf.split(X,Y)):     #iterate over the number of splits, returns indexes of the train and test set
         
             x_train_fold, x_test_fold = X[train_index], X[test_index]      #selected data for train and test in j-fold
             y_train_fold, y_test_fold = Y[train_index], Y[test_index]      #selected targets
             
+            full_original.append(x_train_fold)
+            full_lab_ori.append(y_train_fold)
             print('\n')
             print('ITERATION --> ',j)
     
@@ -247,9 +255,12 @@ def cross_validation(X,Y,n_splits,model,averages):
         #call the method OversampKDE on the training partition, which
             #- given a list of class examples, oversamples the minority classes
             x1_fold,y1_fold = oversamp_KDE_definitive(x_train_fold,y_train_fold)
+            kde_full.append(x1_fold)
+            full_lab_kde.append(y1_fold)
         #call the method OversampSMOTE on the training partitioning
             x2_fold,y2_fold = oversamp_SMOTE_definitive(x_train_fold,y_train_fold)
-
+            smote_full.append(x2_fold)
+            full_lab_smote.append(y2_fold)
         #------------------------------------------------------------------------
         # 2) STEP
         #fit model on augmented dataset KDE
@@ -304,7 +315,35 @@ def cross_validation(X,Y,n_splits,model,averages):
             # append Y_test labels to lst_y_test_labels
             lst_y_test_labels.append(y_test_fold)
 
-   
+    #stacking newly generated data and corresponding labels
+    kde_over = np.vstack(kde_full)
+    smote_over = np.vstack(smote_full)
+
+    full_lab_kde = np.hstack(full_lab_kde)
+    full_lab_smote = np.hstack(full_lab_smote)
+
+    full_original = np.vstack(full_original)
+    full_lab_ori = np.hstack(full_lab_ori)
+    ## PCA analysis ##
+    ## kde 
+    pca_analysis(
+      data_generated=smote_over,
+      labels_generated=full_lab_smote,
+      full_data=full_original,
+      full_labels=full_lab_ori,
+      name=name,
+      method='SMOTE'
+
+    )
+    pca_analysis(
+      data_generated=kde_over,
+      labels_generated=full_lab_kde,
+      full_data=full_original,
+      full_labels=full_lab_ori,
+      name=name,
+      method='KDE'
+    )
+    ## collecting metrics
     metrics_overall = {'model_original': [mean(list_acc_ori),mean(pre_ori_lst),mean(rec_ori_lst),mean(list_mcc_ori),mean(list_f1_ori)],'model_smote':[mean(list_acc_smote),mean(pre_smote_lst),mean(rec_smote_lst),mean(list_mcc_smote),mean(list_f1_smote)],'model_kde':[mean(list_acc_kde),mean(pre_kde_lst),mean(rec_kde_lst),mean(list_mcc_kde),mean(list_f1_kde)]}
     metrics_precision = {'model_original':mean(pre_ori_lst),'model_smote':mean(pre_smote_lst),'model_kde':mean(pre_kde_lst)}
     metrics_recall = {'model_original':mean(rec_ori_lst),'model_smote':mean(rec_smote_lst),'model_kde':mean(rec_kde_lst)}
@@ -315,6 +354,54 @@ def cross_validation(X,Y,n_splits,model,averages):
     y_test_labels = np.concatenate(lst_y_test_labels, axis = 0)
     
     return y_test_labels, d_proba, d_acc, metrics_recall, metrics_precision, metrics_overall
+
+def pca_analysis(
+  data_generated:np.array,
+  labels_generated:np.array,
+  full_data:np.array,
+  full_labels:np.array,
+  name:str,
+  method:str
+)-> None:
+
+
+    original_reduced = PCA(n_components=2).fit_transform(full_data)
+    oversampled_reduced = PCA(n_components=2).fit_transform(data_generated)
+    #full_smote_reduced = PCA(n_components=2).fit_transform(smote_generated)
+
+  # Convert labels to numpy arrays if not already
+    # kde_labels = np.array(kde_labels)
+    # smote_labels = np.array(smote_labels)
+    # full_labels = np.array(full_labels)
+
+    # Plot
+    
+    plt.figure(figsize=(10, 7))
+    # Original data: circles
+    plt.scatter(original_reduced[:, 0], original_reduced[:, 1], 
+                c=full_labels, cmap='tab10', alpha=0.6, marker='o', label='Original')
+    # KDE-oversampled data: crosses
+    plt.scatter(oversampled_reduced[:, 0], oversampled_reduced[:, 1], 
+                c=labels_generated, cmap='tab10', alpha=0.6, marker='x', label=method)
+
+    # SMOTE-oversampled data: triangles
+    # plt.scatter(full_smote_reduced[:, 0], full_smote_reduced[:, 1], 
+    #             c=smote_labels, cmap='tab10', alpha=0.6, marker='^', label='SMOTE')
+
+    plt.title(f"PCA Projection of Original and {method}")
+    plt.xlabel("PCA Component 1")
+    plt.ylabel("PCA Component 2")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+
+    save_path = f'results/tables/{name}_{method}_pca_plot.png'
+    plt.savefig(save_path, dpi=300)
+    print(f'Lenght of Ori{len(full_data)}')
+    print(f'Lenght of Gen{len(data_generated)}')
+    print(f"Plot saved to {save_path}")
+
+
 
 
 def result_render_binary(d_probabilities,d_accuracies,precision_d,recall_d,y_test,title_set,save_imcp,classifier):
@@ -333,8 +420,8 @@ def result_render_binary(d_probabilities,d_accuracies,precision_d,recall_d,y_tes
     row = {'Classifier': model_name, 'fpr': fpr,'tpr': tpr,'auc': auc_binary}          
     table_binary.loc[len(table_binary)] = row  
 
-  #output_path = os.path.join(save_imcp, '{}_{}_imcp'.format(title_set,classifier))
-  #plot_imcp_curve(y_test,scores,abs_tolerance=0.0000001,output_fig_path=output_path)
+  output_path = os.path.join(save_imcp, '{}_{}_imcp'.format(title_set,classifier))
+  plot_imcp_curve(y_test,scores,abs_tolerance=0.0000001,output_fig_path=output_path)
 
   for rec in recall_d.values():
      recalls.append(rec)
@@ -475,9 +562,9 @@ def plot_OvR(y_test,y_predicted,title_set,model,method_type,save_folder):
   plt.ylim([-0.005, 1.01])
   plt.xticks([i/10.0 for i in range(11)])
   plt.yticks([i/10.0 for i in range(11)])
-  plt.xlabel("False Positive Rate", fontsize=15)
-  plt.ylabel("True Positive Rate", fontsize=15)
-  plt.title('{}-{} OvR ROC - {}'.format(method_type,model,title_set), fontweight='bold', fontsize=12)
+  plt.xlabel("False Positive Rate", fontsize=15,fontweight='normal')
+  plt.ylabel("True Positive Rate", fontsize=15, fontweight='normal')
+  plt.title('{}-{} OvR ROC - {}'.format(method_type,model,title_set), fontweight='normal', fontsize=12)
   plt.legend(prop={'size':13}, loc='lower right')
   plt.grid(linestyle='--', linewidth=0.5)
 
@@ -494,7 +581,7 @@ def multi_class_roc_save(title_set,table,model,save_folder,name = str()):
         os.makedirs(save_folder)
     #macro
     #plt.figure(dpi=600)
-    plt.figure(figsize=(8,6))
+    plt.figure(figsize=(9,7))
     table.set_index('Classifier', inplace = True)
     #colors = ['navy','orange','green']
     colors = ['royalblue','saddlebrown','lightcoral']
@@ -506,9 +593,9 @@ def multi_class_roc_save(title_set,table,model,save_folder,name = str()):
     plt.ylim([-0.005, 1.01])
     plt.xticks([i/10.0 for i in range(11)])
     plt.yticks([i/10.0 for i in range(11)])
-    plt.xlabel("False Positive Rate", fontsize=15)
-    plt.ylabel("True Positive Rate", fontsize=15)
-    plt.title('{}-average ROC curve  - {}'.format(name, title_set), fontweight='bold', fontsize=15)
+    plt.xlabel("False Positive Rate", fontsize=15, fontweight='normal')
+    plt.ylabel("True Positive Rate", fontsize=15, fontweight='normal')
+    plt.title('{}-averaged ROC curves'.format(name), fontweight='normal', fontsize=15, y = 1.05)
     plt.legend(prop={'size':13}, loc='lower right')
     plt.grid(linestyle='--', linewidth=0.5)
 
@@ -527,7 +614,7 @@ def multi_class_roc_save(title_set,table,model,save_folder,name = str()):
 def roc_curve_save(title_set,table, save_folder, model):
     if not os.path.exists(save_folder):
         os.makedirs(save_folder)
-    plt.figure(figsize=(8,6))
+    plt.figure(figsize=(9,7))
     table.set_index('Classifier', inplace = True)
     colors = ['royalblue','saddlebrown','lightcoral']
     for i,color in zip(table.index,colors):
@@ -538,9 +625,9 @@ def roc_curve_save(title_set,table, save_folder, model):
     plt.ylim([-0.005, 1.01])
     plt.xticks([i/10.0 for i in range(11)])
     plt.yticks([i/10.0 for i in range(11)])
-    plt.xlabel("False Positive Rate", fontsize=15)
-    plt.ylabel("True Positive Rate", fontsize=15)
-    plt.title('ROC - {}'.format(title_set), fontweight='bold', fontsize=15)
+    plt.xlabel("False Positive Rate", fontsize=15, fontweight='normal')
+    plt.ylabel("True Positive Rate", fontsize=15, fontweight='normal')
+    plt.title('ROC curves', fontweight='normal', fontsize=15, y = 1.05)
     plt.legend(prop={'size':13}, loc='lower right')
     plt.grid(linestyle='--', linewidth=0.5)
     file_name = os.path.join(save_folder, '{}_{}_png'.format(title_set,model))
@@ -551,9 +638,9 @@ if __name__== '__main__':
    
 
    cv_splits = 10
-  # #  classifier = GaussianNB()
+   #classifier = GaussianNB()
    classifier = DecisionTreeClassifier()
-  #  classifier = RandomForestClassifier(random_state=0)
+   #classifier = RandomForestClassifier(random_state=0)
    save_folder = 'results/tables'
    save_folder_paper = 'results/tables_paper'
    save_folder_roc_micro = 'results/roc_curves/micro'
@@ -570,7 +657,7 @@ if __name__== '__main__':
    dataframe_metrics = pd.DataFrame(columns = ['Dataset','Acc(raw)','Precision(raw)','Recall(raw)','MCC(raw)','f1(raw)','Acc(smote)','Precision(smote)','Recall(smote)','MCC(smote)','f1(smote)','Acc(kde)','Precision(kde)','Recall(kde)','MCC(kde)','f1(kde)'])
 
 
-   source_folder = "datasets"
+   source_folder = "datasets/review"
    all_files = glob.glob(os.path.join(source_folder, '*.csv'))
    all_files.sort()
    print(all_files)
@@ -592,16 +679,15 @@ if __name__== '__main__':
             print(dataset.head())
             
             x,y,att = dataset_parser_def(dataset)
-            classes = len(np.unique(y))
-
+            classes = len(np.unique(y))            
             if classes == 2:
                averages = 'binary'
             else:
-               averages = 'macro'
-               #averages = 'micro'
+               #averages = 'macro'
+               averages = 'micro'
                
             #oversampled_dataframe = oversamp_KDE_definitive(x,y)
-            labels, probabilities_final, accuracies, precision, recall , dict_metrics= cross_validation(x,y,cv_splits,classifier,averages) 
+            labels, probabilities_final, accuracies, precision, recall , dict_metrics= cross_validation(x,y,cv_splits,classifier,averages,title) 
             
             merged_metrics = []
             for k,v in dict_metrics.items():
